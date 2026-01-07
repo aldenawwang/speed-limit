@@ -458,7 +458,8 @@ def main():
         imgsz=640,
         batch=16,
         patience=10,
-        augment=True
+        augment=True,
+        device='mps'
     )
     
     # Option 3: Full training with heavy augmentation (production)
