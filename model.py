@@ -25,12 +25,21 @@ class SpeedSignTrainer:
         self.project_name = project_name
         self.model = None
         
-        # Check for GPU
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"Using device: {self.device}")
-        if self.device == 'cuda':
+        # Check for GPU/MPS (Apple Silicon)
+        if torch.cuda.is_available():
+            self.device = 'cuda'
+            print(f"Using device: {self.device}")
             print(f"GPU: {torch.cuda.get_device_name(0)}")
             print(f"CUDA Version: {torch.version.cuda}")
+        elif torch.backends.mps.is_available():
+            self.device = 'mps'
+            print(f"Using device: {self.device} (Apple Metal)")
+            print(f"PyTorch version: {torch.__version__}")
+            print("✓ MPS acceleration enabled for Apple Silicon")
+        else:
+            self.device = 'cpu'
+            print(f"Using device: {self.device}")
+            print("WARNING: No GPU acceleration available")
     
     def create_data_yaml(self, 
                          data_path='./data',

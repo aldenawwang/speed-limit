@@ -1,0 +1,308 @@
+# Speed Sign Training - Quick Start Guide
+
+## Prerequisites
+```bash
+# Activate your virtual environment
+source venv/bin/activate  # or venv\Scripts\activate on Windows
+
+# Ensure all packages are installed
+pip install ultralytics torch torchvision opencv-python pyyaml pandas matplotlib
+```
+
+## Step 1: Organize Your Dataset
+
+Your dataset should follow this structure:
+```
+data/
+├── images/
+│   ├── train/
+│   │   ├── img001.jpg
+│   │   ├── img002.jpg
+│   │   └── ...
+│   └── val/
+│       ├── img101.jpg
+│       ├── img102.jpg
+│       └── ...
+└── labels/
+    ├── train/
+    │   ├── img001.txt
+    │   ├── img002.txt
+    │   └── ...
+    └── val/
+        ├── img101.txt
+        ├── img102.txt
+        └── ...
+```
+
+### Label Format (YOLO)
+Each `.txt` file contains one line per object:
+```
+class_id x_center y_center width height
+```
+
+Where:
+- `class_id`: 0 = speed_limit, 1 = construction, 2 = school_zone
+- All coordinates are normalized (0.0 to 1.0)
+
+Example `img001.txt`:
+```
+0 0.5 0.3 0.15 0.2
+1 0.7 0.5 0.12 0.18
+```
+
+## Step 2: Create data.yaml
+
+The script will auto-create this, or create it manually:
+
+```yaml
+path: ./data
+train: images/train
+val: images/val
+
+nc: 3  # number of classes
+names: ['speed_limit', 'construction', 'school_zone']
+```
+
+## Step 3: Run Training
+
+### Basic Training (Quick Test)
+```python
+from train_model import SpeedSignTrainer
+
+trainer = SpeedSignTrainer(model_size='n', project_name='test_run')
+trainer.train(epochs=10, batch=8, imgsz=640)
+```
+
+### Production Training
+```python
+trainer = SpeedSignTrainer(model_size='s', project_name='production_v1')
+trainer.train(
+    epochs=100,
+    batch=16,
+    imgsz=640,
+    patience=20,
+    augment=True
+)
+```
+
+### Command Line
+```bash
+python train_model.py
+```
+
+## Step 4: Monitor Training
+
+Training outputs go to: `runs/train/[project_name]/`
+
+Key files:
+- `weights/best.pt` - Best model checkpoint
+- `weights/last.pt` - Last epoch checkpoint
+- `results.csv` - Training metrics per epoch
+- `results.png` - Training curves visualization
+- `confusion_matrix.png` - Class confusion matrix
+- `val_batch*.jpg` - Validation predictions
+
+### Watch Training Progress
+```bash
+# In another terminal
+tensorboard --logdir runs/train
+# Open http://localhost:6006
+```
+
+## Step 5: Evaluate Results
+
+```python
+# Load and validate
+trainer = SpeedSignTrainer()
+metrics = trainer.validate(weights_path='runs/train/production_v1/weights/best.pt')
+
+# Test on single image
+trainer.test_inference(
+    test_image='test_images/sample.jpg',
+    weights_path='runs/train/production_v1/weights/best.pt',
+    conf=0.5
+)
+```
+
+## Step 6: Export for Deployment
+
+```python
+trainer.export_model(
+    weights_path='runs/train/production_v1/weights/best.pt',
+    formats=['onnx', 'torchscript', 'tflite']
+)
+```
+
+## Understanding Training Parameters
+
+### Model Size (`model_size`)
+- `'n'` (nano): Fastest, smallest, ~3M params
+- `'s'` (small): Balanced, ~11M params
+- `'m'` (medium): More accurate, ~26M params
+- `'l'` (large): High accuracy, ~44M params
+
+### Key Hyperparameters
+
+**epochs** (50-200)
+- More epochs = better learning, but risk overfitting
+- Use early stopping (`patience`) to prevent overfitting
+
+**batch** (8-32)
+- Higher = faster training, more GPU memory needed
+- If you get OOM errors, reduce batch size
+- Rule of thumb: batch=16 for 8GB GPU
+
+**imgsz** (416-1280)
+- 640 is standard, good balance
+- Larger = more detail, slower training
+- Must be multiple of 32
+
+**patience** (10-50)
+- Stops training if no improvement after N epochs
+- Prevents wasting time on plateaued models
+
+### Augmentation Parameters
+
+**Strong augmentation** (when you have <1000 images):
+```python
+trainer.train(
+    mosaic=1.0,      # Enable mosaic augmentation
+    mixup=0.15,      # 15% mixup
+    degrees=20.0,    # ±20° rotation
+    scale=0.9,       # 90% scale variance
+    hsv_h=0.02,      # Color jitter
+    hsv_s=0.8,
+    hsv_v=0.5,
+    fliplr=0.5       # 50% horizontal flip
+)
+```
+
+**Light augmentation** (when you have >5000 images):
+```python
+trainer.train(
+    mosaic=0.5,
+    degrees=10.0,
+    scale=0.5,
+    fliplr=0.5
+)
+```
+
+## Troubleshooting
+
+### Low GPU Utilization
+```python
+# Increase batch size
+trainer.train(batch=32)  # instead of 16
+```
+
+### Out of Memory (OOM)
+```python
+# Reduce batch size or image size
+trainer.train(batch=8, imgsz=512)
+```
+
+### Poor Validation mAP
+1. Train longer (more epochs)
+2. Collect more diverse data
+3. Increase augmentation
+4. Try a larger model ('s' or 'm')
+5. Check for labeling errors
+
+### Model Not Learning (mAP stays at 0)
+1. Verify dataset paths in data.yaml
+2. Check label format (YOLO format, normalized coords)
+3. Ensure class IDs match (0, 1, 2)
+4. Try reducing learning rate: `lr0=0.001`
+
+## Performance Benchmarks
+
+Expected results with good data:
+
+| Dataset Size | Epochs | Model | mAP50 | Training Time (V100) |
+|-------------|--------|-------|-------|---------------------|
+| 500 images  | 100    | YOLOv8n | 0.75-0.85 | ~30 min |
+| 2000 images | 100    | YOLOv8s | 0.85-0.92 | ~2 hours |
+| 5000 images | 150    | YOLOv8m | 0.90-0.95 | ~6 hours |
+
+## Advanced: Fine-tuning from Checkpoint
+
+Resume training from a checkpoint:
+```python
+trainer.train(
+    epochs=50,
+    resume=True  # Resumes from last.pt in same project
+)
+```
+
+Or start from a specific checkpoint:
+```python
+trainer = SpeedSignTrainer(model_size='custom')
+trainer.model = YOLO('runs/train/previous_run/weights/best.pt')
+trainer.train(epochs=50)
+```
+
+## Advanced: Hyperparameter Tuning
+
+Let YOLO find best hyperparameters:
+```python
+from ultralytics import YOLO
+
+model = YOLO('yolov8n.pt')
+model.tune(
+    data='data.yaml',
+    epochs=30,
+    iterations=300,
+    optimizer='AdamW',
+    plots=True,
+    save=True
+)
+```
+
+## Next Steps After Training
+
+1. **Integrate into detector**:
+   ```python
+   from detector import SpeedLimitDetector
+   detector = SpeedLimitDetector('runs/train/production_v1/weights/best.pt')
+   ```
+
+2. **Test on dashcam footage**:
+   ```python
+   detector.process_video('dashcam.mp4', 'output.mp4', display=True)
+   ```
+
+3. **Deploy to edge device**:
+   - Convert to ONNX or TensorRT
+   - Deploy on NVIDIA Jetson, Raspberry Pi, etc.
+
+4. **Collect more edge cases**:
+   - Nighttime images
+   - Rainy/foggy conditions
+   - Partially occluded signs
+   - Retrain with augmented dataset
+
+## Dataset Recommendations
+
+**Minimum for prototype**: 200 images (70/30 train/val split)
+**Recommended for production**: 2000+ images with variety:
+- Different weather conditions
+- Various lighting (day/night)
+- Multiple angles and distances
+- Different sign conditions (new/worn)
+- Various backgrounds
+
+**Where to find data**:
+- YouTube dashcam videos (extract frames)
+- Mapillary Traffic Sign Dataset
+- LISA Traffic Sign Dataset
+- German Traffic Sign Recognition Benchmark (GTSRB)
+- Your own dashcam footage
+
+## Tips for Best Results
+
+1. **Balance your dataset**: Equal examples of each class
+2. **Quality > Quantity**: 1000 good labels > 5000 bad labels
+3. **Use validation set**: Never train on validation data
+4. **Start small**: Train on small model first to verify pipeline
+5. **Monitor overfitting**: If train mAP >> val mAP, you're overfitting
+6. **Save everything**: Keep all checkpoints until you're sure

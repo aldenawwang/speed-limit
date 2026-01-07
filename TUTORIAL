@@ -1,0 +1,648 @@
+# Complete Training Tutorial - Step by Step
+
+## Overview
+This guide walks you through training a speed limit sign detection model from scratch using `train_model.py`.
+
+---
+
+## Phase 1: Setup (15 minutes)
+
+### Step 1.1: Create Project Structure
+```bash
+# Create main project directory
+mkdir speed-sign-detector
+cd speed-sign-detector
+
+# Create subdirectories
+mkdir -p data/images/train
+mkdir -p data/images/val
+mkdir -p data/labels/train
+mkdir -p data/labels/val
+mkdir -p test_images
+mkdir -p models
+```
+
+Your structure should look like:
+```
+speed-sign-detector/
+├── data/
+│   ├── images/
+│   │   ├── train/     # Training images go here
+│   │   └── val/       # Validation images go here
+│   └── labels/
+│       ├── train/     # Training labels go here
+│       └── val/       # Validation labels go here
+├── test_images/       # Test images for inference
+├── models/            # Store your trained models here
+├── detector.py        # Your detection script
+└── train_model.py     # Your training script
+```
+
+### Step 1.2: Set Up Virtual Environment
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate it
+# On Windows:
+venv\Scripts\activate
+
+# On Mac/Linux:
+source venv/bin/activate
+
+# Verify activation (you should see (venv) in your prompt)
+which python  # Should point to venv/bin/python
+```
+
+### Step 1.3: Install Dependencies
+```bash
+# Upgrade pip first
+pip install --upgrade pip
+
+# Install required packages
+pip install ultralytics torch torchvision opencv-python pyyaml pandas matplotlib numpy pillow
+
+# Verify installation
+python -c "import torch; print(f'PyTorch: {torch.__version__}')"
+python -c "from ultralytics import YOLO; print('Ultralytics YOLO installed')"
+python -c "import cv2; print(f'OpenCV: {cv2.__version__}')"
+```
+
+### Step 1.4: Check GPU (Optional but Recommended)
+```bash
+# Check if CUDA is available
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+python -c "import torch; print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"None\"}')"
+```
+
+**If GPU is not available:**
+- Training will work on CPU but be slower
+- Consider using Google Colab (free GPU) or cloud services
+- Reduce batch size to 4-8 for CPU training
+
+---
+
+## Phase 2: Prepare Your Dataset (1-3 hours)
+
+### Step 2.1: Collect Images
+
+You need images of speed limit signs. Sources:
+
+**Option A: Use Existing Datasets (Recommended for Learning)**
+```bash
+# Download LISA Traffic Sign Dataset (example)
+# Visit: http://cvrr.ucsd.edu/LISA/lisa-traffic-sign-dataset.html
+
+# Or use Roboflow public datasets
+# Visit: https://universe.roboflow.com/
+# Search for "traffic signs" or "speed limit"
+```
+
+**Option B: Create Your Own**
+1. Record dashcam video or take photos while driving (safely!)
+2. Extract frames from YouTube dashcam videos
+3. Use Google Images (be mindful of licensing)
+
+**Dataset Requirements:**
+- Minimum: 200 images (140 train, 60 val)
+- Recommended: 1000+ images (700 train, 300 val)
+- Variety: Different lighting, angles, weather, distances
+
+### Step 2.2: Label Your Images
+
+You need to draw bounding boxes around signs and assign classes.
+
+**Using LabelImg (Easy, GUI-based):**
+```bash
+# Install LabelImg
+pip install labelImg
+
+# Run it
+labelImg
+
+# Steps in LabelImg:
+# 1. Click "Open Dir" → select data/images/train
+# 2. Click "Change Save Dir" → select data/labels/train
+# 3. Click "YOLO" button (important!)
+# 4. Press 'W' to draw box around sign
+# 5. Type class name: speed_limit, construction, or school_zone
+# 6. Press 'D' to go to next image
+# 7. Repeat for all images
+```
+
+**Using CVAT (Advanced, web-based):**
+```bash
+# Visit: https://www.cvat.ai/
+# Create account and project
+# Upload images
+# Create labels: speed_limit, construction, school_zone
+# Draw bounding boxes
+# Export as "YOLO 1.1"
+```
+
+**Using Roboflow (Cloud-based, recommended):**
+```bash
+# Visit: https://roboflow.com/
+# Create free account
+# Upload images
+# Label with bounding boxes
+# Export as "YOLOv8"
+# Download and extract to your data/ folder
+```
+
+### Step 2.3: Verify Label Format
+
+Open any `.txt` file in `data/labels/train/`:
+```
+0 0.5 0.3 0.15 0.2
+1 0.7 0.5 0.12 0.18
+```
+
+Each line format:
+```
+class_id center_x center_y width height
+```
+
+- `class_id`: 0=speed_limit, 1=construction, 2=school_zone
+- All values are normalized (0.0 to 1.0)
+- `center_x, center_y`: Center of bounding box
+- `width, height`: Box dimensions
+
+**Verify with Python:**
+```python
+import os
+
+# Count images
+train_imgs = len(os.listdir('data/images/train'))
+val_imgs = len(os.listdir('data/images/val'))
+
+# Count labels
+train_labels = len(os.listdir('data/labels/train'))
+val_labels = len(os.listdir('data/labels/val'))
+
+print(f"Training: {train_imgs} images, {train_labels} labels")
+print(f"Validation: {val_imgs} images, {val_labels} labels")
+
+# Should match!
+assert train_imgs == train_labels, "Mismatch in training data!"
+assert val_imgs == val_labels, "Mismatch in validation data!"
+print("✓ Dataset verified!")
+```
+
+### Step 2.4: Create data.yaml
+
+Create a file called `data.yaml` in your project root:
+
+```yaml
+# data.yaml
+path: ./data
+train: images/train
+val: images/val
+
+nc: 3
+names: ['speed_limit', 'construction', 'school_zone']
+```
+
+**Or let the script create it:**
+```python
+from train_model import SpeedSignTrainer
+
+trainer = SpeedSignTrainer()
+trainer.create_data_yaml(
+    data_path='./data',
+    train_path='images/train',
+    val_path='images/val',
+    class_names=['speed_limit', 'construction', 'school_zone']
+)
+```
+
+---
+
+## Phase 3: Training (30 min - 8 hours depending on dataset size)
+
+### Step 3.1: Quick Test Run (5 minutes)
+
+First, verify everything works with a quick training run:
+
+```python
+# test_training.py
+from train_model import SpeedSignTrainer
+
+# Initialize trainer
+trainer = SpeedSignTrainer(
+    data_yaml='data.yaml',
+    model_size='n',  # Nano - fastest model
+    project_name='test_run'
+)
+
+# Quick test training (just 3 epochs)
+print("Starting quick test training...")
+results = trainer.train(
+    epochs=3,          # Just 3 epochs to test
+    imgsz=640,         # Image size
+    batch=8,           # Small batch for testing
+    patience=10,       # Early stopping patience
+    augment=True       # Enable augmentation
+)
+
+print("Test training complete!")
+print("Check: runs/train/test_run/")
+```
+
+Run it:
+```bash
+python test_training.py
+```
+
+**Expected output:**
+```
+Using device: cuda
+GPU: NVIDIA GeForce RTX 3080
+Loading pretrained model: yolov8n.pt
+
+=== Dataset Verification ===
+Training images: 140
+Training labels: 140
+Validation images: 60
+Validation labels: 60
+✓ Dataset structure verified
+
+=== Starting Training ===
+Epochs: 3
+Device: cuda
+
+Epoch 1/3: 100%|████████| ... loss: 2.5432
+Epoch 2/3: 100%|████████| ... loss: 1.8765
+Epoch 3/3: 100%|████████| ... loss: 1.4321
+
+✓ Training completed!
+```
+
+### Step 3.2: Full Training Run
+
+Now train for real:
+
+```python
+# train_full.py
+from train_model import SpeedSignTrainer
+
+# Initialize trainer
+trainer = SpeedSignTrainer(
+    data_yaml='data.yaml',
+    model_size='s',  # Small - good balance of speed/accuracy
+    project_name='speed_detector_v1'
+)
+
+# Full training
+print("Starting full training...")
+results = trainer.train(
+    epochs=100,           # Train for 100 epochs
+    imgsz=640,            # Standard image size
+    batch=16,             # Batch size (reduce if OOM error)
+    patience=20,          # Stop if no improvement for 20 epochs
+    save_period=10,       # Save checkpoint every 10 epochs
+    
+    # Augmentation settings
+    augment=True,
+    mosaic=1.0,          # Mosaic augmentation
+    mixup=0.1,           # Mixup augmentation (10%)
+    degrees=15.0,        # Rotate ±15 degrees
+    translate=0.1,       # Translate 10%
+    scale=0.7,           # Scale 70%
+    fliplr=0.5,          # Horizontal flip 50%
+    hsv_h=0.015,         # Hue variation
+    hsv_s=0.7,           # Saturation variation
+    hsv_v=0.4,           # Value/brightness variation
+)
+
+print("Training complete!")
+```
+
+Run it:
+```bash
+python train_full.py
+```
+
+**This will take time:**
+- Small dataset (500 images): ~30-60 minutes
+- Medium dataset (2000 images): ~2-4 hours
+- Large dataset (5000+ images): ~6-12 hours
+
+### Step 3.3: Monitor Training Progress
+
+**Option 1: Watch the terminal**
+You'll see output like:
+```
+Epoch 1/100: 100%|████████| 8/8 [00:12<00:00,  1.53s/it]
+              Class     Images  Instances      Box(P      R      mAP50  mAP50-95)
+                all         60        120      0.651  0.543      0.598     0.342
+
+Epoch 2/100: 100%|████████| 8/8 [00:11<00:00,  1.42s/it]
+              Class     Images  Instances      Box(P      R      mAP50  mAP50-95)
+                all         60        120      0.712  0.601      0.671     0.401
+```
+
+**Key metrics:**
+- **P (Precision)**: When model says "sign", how often is it correct?
+- **R (Recall)**: Of all real signs, how many does it find?
+- **mAP50**: Mean Average Precision at 50% IoU threshold (main metric)
+- **mAP50-95**: More strict metric (average across IoU thresholds)
+
+**Option 2: TensorBoard (Real-time graphs)**
+```bash
+# In a new terminal (keep training running in other terminal)
+tensorboard --logdir runs/train
+
+# Open browser to: http://localhost:6006
+```
+
+**Option 3: Check results after training**
+```bash
+# Navigate to results
+cd runs/train/speed_detector_v1/
+
+# View training plots
+open results.png  # Mac
+xdg-open results.png  # Linux
+start results.png  # Windows
+```
+
+---
+
+## Phase 4: Evaluate Your Model (15 minutes)
+
+### Step 4.1: Run Validation
+
+```python
+# evaluate_model.py
+from train_model import SpeedSignTrainer
+
+# Initialize trainer
+trainer = SpeedSignTrainer()
+
+# Validate the trained model
+print("Running validation...")
+metrics = trainer.validate(
+    weights_path='runs/train/speed_detector_v1/weights/best.pt'
+)
+
+# Print detailed results
+print("\n=== Validation Results ===")
+print(f"mAP50: {metrics.box.map50:.3f}")
+print(f"mAP50-95: {metrics.box.map:.3f}")
+print(f"Precision: {metrics.box.mp:.3f}")
+print(f"Recall: {metrics.box.mr:.3f}")
+
+# Per-class metrics
+for i, name in enumerate(['speed_limit', 'construction', 'school_zone']):
+    print(f"\n{name}:")
+    print(f"  Precision: {metrics.box.p[i]:.3f}")
+    print(f"  Recall: {metrics.box.r[i]:.3f}")
+```
+
+Run it:
+```bash
+python evaluate_model.py
+```
+
+**Good results:**
+- mAP50 > 0.80 (80%): Excellent
+- mAP50 > 0.70 (70%): Good
+- mAP50 > 0.60 (60%): Acceptable
+- mAP50 < 0.50 (50%): Needs improvement
+
+**If results are poor:**
+1. Train longer (more epochs)
+2. Collect more/better data
+3. Increase augmentation
+4. Try larger model ('m' or 'l')
+5. Check for labeling errors
+
+### Step 4.2: Test on Real Images
+
+```python
+# test_inference.py
+from train_model import SpeedSignTrainer
+
+trainer = SpeedSignTrainer()
+
+# Test on a single image
+results = trainer.test_inference(
+    test_image='test_images/sample.jpg',
+    weights_path='runs/train/speed_detector_v1/weights/best.pt',
+    conf=0.5,  # 50% confidence threshold
+    save_path='test_result.jpg'
+)
+
+print("Result saved to test_result.jpg")
+```
+
+### Step 4.3: Generate Training Report
+
+```python
+# generate_report.py
+from train_model import SpeedSignTrainer
+
+trainer = SpeedSignTrainer()
+trainer.create_training_report('runs/train/speed_detector_v1')
+```
+
+---
+
+## Phase 5: Use Your Trained Model (5 minutes)
+
+### Step 5.1: Integrate with Detector
+
+Update your `detector.py` to use the trained model:
+
+```python
+from detector import SpeedLimitDetector
+
+# Load your trained model instead of pretrained
+detector = SpeedLimitDetector(
+    model_path='runs/train/speed_detector_v1/weights/best.pt'
+)
+
+# Process video
+detector.process_video('dashcam.mp4', 'output.mp4', display=True)
+
+# Or process webcam
+detector.process_video(0, display=True)
+```
+
+### Step 5.2: Export for Production
+
+```python
+# export_model.py
+from train_model import SpeedSignTrainer
+
+trainer = SpeedSignTrainer()
+
+# Export to multiple formats
+trainer.export_model(
+    weights_path='runs/train/speed_detector_v1/weights/best.pt',
+    formats=['onnx', 'torchscript'],
+    imgsz=640,
+    optimize=True
+)
+
+print("Exported models:")
+print("- best.onnx (for C++, TensorRT)")
+print("- best.torchscript (for PyTorch mobile)")
+```
+
+---
+
+## Common Issues & Solutions
+
+### Issue 1: "RuntimeError: CUDA out of memory"
+```python
+# Solution: Reduce batch size
+trainer.train(
+    batch=8,  # Instead of 16
+    imgsz=512  # Instead of 640 if still OOM
+)
+```
+
+### Issue 2: "No labels found"
+```bash
+# Check label files exist
+ls data/labels/train/
+ls data/labels/val/
+
+# Verify data.yaml paths are correct
+cat data.yaml
+
+# Make sure label format is correct (YOLO format)
+cat data/labels/train/img001.txt
+```
+
+### Issue 3: Model not learning (mAP stays at 0)
+```python
+# Check class IDs in labels (should be 0, 1, 2)
+# Verify normalized coordinates (all values 0.0-1.0)
+# Try reducing learning rate
+trainer.train(lr0=0.001)  # Instead of default 0.01
+```
+
+### Issue 4: Training is too slow
+```python
+# Use smaller model
+trainer = SpeedSignTrainer(model_size='n')
+
+# Reduce image size
+trainer.train(imgsz=416)
+
+# Or train on fewer images first
+trainer.train(fraction=0.5)  # Use 50% of data
+```
+
+### Issue 5: Overfitting (train mAP >> val mAP)
+```python
+# Increase augmentation
+trainer.train(
+    mosaic=1.0,
+    mixup=0.2,
+    degrees=20.0,
+    hsv_s=0.9
+)
+
+# Add more validation data
+# Reduce model size
+# Enable dropout
+```
+
+---
+
+## Complete Example Script
+
+Here's everything in one script you can run:
+
+```python
+# complete_training.py
+from train_model import SpeedSignTrainer
+import os
+
+def main():
+    print("=== Speed Sign Detector Training ===\n")
+    
+    # Step 1: Verify dataset exists
+    if not os.path.exists('data/images/train'):
+        print("ERROR: data/images/train not found!")
+        print("Please create dataset first. See tutorial above.")
+        return
+    
+    # Step 2: Create data.yaml if needed
+    if not os.path.exists('data.yaml'):
+        print("Creating data.yaml...")
+        trainer = SpeedSignTrainer()
+        trainer.create_data_yaml()
+    
+    # Step 3: Initialize trainer
+    print("\nInitializing trainer...")
+    trainer = SpeedSignTrainer(
+        data_yaml='data.yaml',
+        model_size='s',
+        project_name='speed_detector_v1'
+    )
+    
+    # Step 4: Train
+    print("\nStarting training...")
+    results = trainer.train(
+        epochs=100,
+        batch=16,
+        imgsz=640,
+        patience=20,
+        augment=True
+    )
+    
+    # Step 5: Validate
+    print("\nValidating model...")
+    metrics = trainer.validate()
+    
+    # Step 6: Export
+    print("\nExporting model...")
+    trainer.export_model(
+        weights_path='runs/train/speed_detector_v1/weights/best.pt',
+        formats=['onnx']
+    )
+    
+    # Step 7: Report
+    print("\nGenerating report...")
+    trainer.create_training_report('runs/train/speed_detector_v1')
+    
+    print("\n✓ Training pipeline complete!")
+    print(f"\nYour model: runs/train/speed_detector_v1/weights/best.pt")
+    print(f"mAP50: {metrics.box.map50:.3f}")
+    
+    # Step 8: Test on image
+    if os.path.exists('test_images/sample.jpg'):
+        print("\nTesting on sample image...")
+        trainer.test_inference(
+            test_image='test_images/sample.jpg',
+            weights_path='runs/train/speed_detector_v1/weights/best.pt'
+        )
+        print("Result saved!")
+
+if __name__ == "__main__":
+    main()
+```
+
+Run everything at once:
+```bash
+python complete_training.py
+```
+
+---
+
+## Next Steps
+
+After successful training:
+
+1. **Test extensively**: Try many different images/videos
+2. **Collect edge cases**: Find where it fails, add to training data
+3. **Retrain iteratively**: Keep improving with more data
+4. **Deploy**: Integrate into your full application
+5. **Monitor performance**: Track real-world accuracy
+
+**You're ready to train! Start with Phase 1 and work through each phase.**
